@@ -63,6 +63,8 @@ type Server struct {
 	Targets         Targets
 	LBMode          LBMode
 	roundRobinIndex int64
+	ln              net.Listener
+	closed          int32
 }
 
 // LBMode is the Load Balancer mode enum type.
@@ -116,47 +118,65 @@ func isClosedConnection(err error) bool {
 }
 
 // Run starts the load balancer.
-func (s *Server) Run() {
+func (s *Server) Run() error {
+	// Listen on requested addr.
 	ln, err := net.Listen("tcp", s.Laddr)
 	if err != nil {
-		log.Fatalf("Error listenning to laddr: %s", err)
+		return err
 	}
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Fatalf("Error accepting connection: %s", err)
-		}
-		go func() {
-			defer conn.Close()
-
-			target := s.LoadBalance(conn)
-
-			rConn, err := net.Dial("tcp", target.String())
+	// Store the listener to terminate the LB.
+	s.ln = ln
+	// Update the laddr in case of randomized port.
+	s.Laddr = ln.Addr().String()
+	go func() {
+		for {
+			conn, err := ln.Accept()
 			if err != nil {
-				atomic.AddInt64(&target.Errors, 1)
-				log.Printf("Error connecting to remote target %s (%s)", target, err)
+				if atomic.LoadInt32(&s.closed) == 0 {
+					log.Fatalf("Error accepting connection: %s", err)
+				}
 				return
 			}
-			atomic.AddInt64(&target.ActiveConn, 1)
 			go func() {
-				defer rConn.Close()
+				defer conn.Close()
 
-				if _, err := io.Copy(rConn, conn); err != nil {
+				target := s.LoadBalance(conn)
+
+				rConn, err := net.Dial("tcp", target.String())
+				if err != nil {
+					atomic.AddInt64(&target.Errors, 1)
+					log.Printf("Error connecting to remote target %s (%s)", target, err)
+					return
+				}
+				atomic.AddInt64(&target.ActiveConn, 1)
+				go func() {
+					defer rConn.Close()
+
+					if _, err := io.Copy(rConn, conn); err != nil {
+						// If error not a disconnect, display.
+						if !isClosedConnection(err) {
+							log.Printf("Connection error with remote target %s: %s", target, err)
+						}
+						atomic.AddInt64(&target.Errors, 1)
+					}
+				}()
+				// Check errors from remote.
+				if _, err := io.Copy(conn, rConn); err != nil {
 					// If error not a disconnect, display.
 					if !isClosedConnection(err) {
-						log.Printf("Connection error with remote target %s: %s", target, err)
+						log.Printf("Connection error with client: %s", err)
 					}
-					atomic.AddInt64(&target.Errors, 1)
 				}
+				atomic.AddInt64(&target.ActiveConn, -1)
 			}()
-			// Check errors from remote.
-			if _, err := io.Copy(conn, rConn); err != nil {
-				// If error not a disconnect, display.
-				if !isClosedConnection(err) {
-					log.Printf("Connection error with client: %s", err)
-				}
-			}
-			atomic.AddInt64(&target.ActiveConn, -1)
-		}()
-	}
+		}
+	}()
+	return nil
+}
+
+// Close terminates the load balancer.
+// TODO: interrupt all connections before closing.
+func (s *Server) Close() error {
+	atomic.StoreInt32(&s.closed, 1)
+	return s.ln.Close()
 }

@@ -1,9 +1,13 @@
 package tcplb_test
 
-import "github.com/creack/tcplb"
+import (
+	"log"
+
+	"github.com/creack/tcplb"
+)
 
 func ExampleServer() {
-	(&tcplb.Server{
+	if err := (&tcplb.Server{
 		Laddr: "0.0.0.0:7000",
 		Targets: tcplb.Targets{
 			{
@@ -16,5 +20,7 @@ func ExampleServer() {
 			},
 		},
 		LBMode: tcplb.LBRoundRobin,
-	}).Run()
+	}).Run(); err != nil {
+		log.Fatalf("Error starting the laod balancer: %s", err)
+	}
 }

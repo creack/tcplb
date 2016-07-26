@@ -7,6 +7,8 @@ import (
 	"net"
 	"sort"
 	"sync/atomic"
+
+	reuseport "github.com/jbenet/go-reuseport"
 )
 
 // Target represent a backend.
@@ -63,8 +65,8 @@ type Server struct {
 	Targets         Targets
 	LBMode          LBMode
 	roundRobinIndex int64
-	ln              net.Listener
-	closed          int32
+	lns             []net.Listener
+	closed          *int32
 }
 
 // LBMode is the Load Balancer mode enum type.
@@ -117,28 +119,30 @@ func isClosedConnection(err error) bool {
 	return false
 }
 
-// Run starts the load balancer.
-func (s *Server) Run() error {
+func (s *Server) run(id int) error {
 	// Listen on requested addr.
-	ln, err := net.Listen("tcp", s.Laddr)
+	ln, err := reuseport.Listen("tcp", s.Laddr)
 	if err != nil {
 		return err
 	}
+
+	log.Printf("Starting load balancer #%d", id)
+
 	// Store the listener to terminate the LB.
-	s.ln = ln
-	// Update the laddr in case of randomized port.
+	s.lns = append(s.lns, ln)
+	// Update the laddr in case of randomized port. Will be the same regardless of the number of instances.
 	s.Laddr = ln.Addr().String()
 	go func() {
-		for {
+		for atomic.LoadInt32(s.closed) == 0 {
 			conn, err := ln.Accept()
 			if err != nil {
-				if atomic.LoadInt32(&s.closed) == 0 {
+				if atomic.LoadInt32(s.closed) == 0 {
 					log.Fatalf("Error accepting connection: %s", err)
 				}
 				return
 			}
 			go func() {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 
 				target := s.LoadBalance(conn)
 
@@ -150,7 +154,7 @@ func (s *Server) Run() error {
 				}
 				atomic.AddInt64(&target.ActiveConn, 1)
 				go func() {
-					defer rConn.Close()
+					defer func() { _ = rConn.Close() }()
 
 					if _, err := io.Copy(rConn, conn); err != nil {
 						// If error not a disconnect, display.
@@ -174,9 +178,28 @@ func (s *Server) Run() error {
 	return nil
 }
 
+// Run starts the asked number of load balancers.
+func (s *Server) Run(nInstances int) error {
+	s.closed = new(int32)
+	for i := 0; i < nInstances; i++ {
+		if err := s.run(i); err != nil {
+			_ = s.Close()
+			return err
+		}
+	}
+	return nil
+}
+
 // Close terminates the load balancer.
 // TODO: interrupt all connections before closing.
 func (s *Server) Close() error {
-	atomic.StoreInt32(&s.closed, 1)
-	return s.ln.Close()
+	atomic.StoreInt32(s.closed, 1)
+
+	var err error
+	for _, ln := range s.lns {
+		if e1 := ln.Close(); err != nil {
+			err = e1
+		}
+	}
+	return err
 }

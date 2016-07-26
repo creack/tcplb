@@ -45,28 +45,28 @@ func TestRoundRobin(t *testing.T) {
 	srv := &tcplb.Server{
 		Laddr: "127.0.0.1:0",
 		Targets: tcplb.Targets{
-			{
+			0: {
 				Host: remote1Host,
 				Port: remote1Port,
 			},
-			{
+			1: {
 				Host: remote2Host,
 				Port: remote2Port,
 			},
 		},
 		LBMode: tcplb.LBRoundRobin,
 	}
-	if err := srv.Run(); err != nil {
+	if err := srv.Run(1); err != nil {
 		t.Fatalf("Error starting the load balancer: %s", err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	callLB := func() {
 		resp, err := http.Get("http://" + srv.Laddr)
 		if err != nil {
 			t.Fatalf("Error requesting http server via LB: %s", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	callLB()

@@ -20,7 +20,8 @@ func ExampleServer() {
 			},
 		},
 		LBMode: tcplb.LBRoundRobin,
-	}).Run(); err != nil {
-		log.Fatalf("Error starting the laod balancer: %s", err)
+	}).Run(1); err != nil {
+		log.Fatalf("Error starting the load balancer: %s", err)
 	}
+	<-make(chan struct{})
 }

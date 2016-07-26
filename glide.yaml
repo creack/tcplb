@@ -1,0 +1,3 @@
+package: github.com/creack/tcplb
+import:
+- package: github.com/jbenet/go-reuseport

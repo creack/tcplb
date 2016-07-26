@@ -1,0 +1,12 @@
+hash: 2fcbf6bcbe5796d5f44edc74cbfaaa916827f0701d8dd5efd04c8d4f09445df7
+updated: 2016-07-26T08:24:07.971438719-05:00
+imports:
+- name: github.com/jbenet/go-reuseport
+  version: 71193aa1a9b006b1071652f02f2f9d8db699a8b3
+  subpackages:
+  - poll
+- name: github.com/jbenet/go-sockaddr
+  version: 2e7ea655c10e4d4d73365f0f073b81b39cb08ee1
+  subpackages:
+  - net
+testImports: []
